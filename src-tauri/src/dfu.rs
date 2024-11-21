@@ -1,14 +1,14 @@
 use crate::{
-    error::{Error, Result},
+    error::{self, Error},
     DFUSE_DEFAULT_ADDRESS, USB_BRIDGE_PRODUCT_DFU_ID, USB_BRIDGE_VENDOR_ID,
 };
-use dfu_libusb::DfuLibusb;
+use dfu_nusb::DfuNusb;
 use fs_extra::file::{copy_with_progress, CopyOptions, TransitProcess};
 use log::{debug, error};
 use std::{path::PathBuf, time::Duration};
 use sysinfo::{DiskExt, RefreshKind, System, SystemExt};
 
-pub fn install_rpi<F>(binary: PathBuf, progress_handler: F) -> Result<u64>
+pub fn install_rpi<F>(binary: PathBuf, progress_handler: F) -> Result<u64, error::Error>
 where
     F: FnMut(TransitProcess),
 {
@@ -47,7 +47,7 @@ where
     }
 }
 
-pub fn install_bridge<F>(binary: PathBuf, progress_handler: F) -> Result<()>
+pub fn install_bridge<F>(binary: PathBuf, progress_handler: F) -> Result<(), error::Error>
 where
     F: FnMut(usize) + 'static,
 {
@@ -55,72 +55,49 @@ where
     let file = std::fs::File::open(binary)
         .map_err(|e| Error::IO(format!("could not open firmware file: {}", e)))?;
 
-    // create our USB context
-    let context = rusb::Context::new()
-        .map_err(|e| Error::Install(format!("unable to create usb context: {}", e)))?;
+    let file_size = u32::try_from(file.metadata().unwrap().len())
+        .map_err(|e| Error::IO(format!("firmware file is too large: {}", e)))?;
 
-    // open the device
-    let (device, handle) = open_device(&context, USB_BRIDGE_VENDOR_ID, USB_BRIDGE_PRODUCT_DFU_ID)?;
+    let device = try_open(USB_BRIDGE_VENDOR_ID, USB_BRIDGE_PRODUCT_DFU_ID, 0, 0)
+        .map_err(|e| Error::Usb(format!("unable to connect with device: {}", e)))?;
 
-    // build the DFU interface
-    let mut dfu_iface = DfuLibusb::from_usb_device(device, handle, 0, 0)
-        .map_err(|e| Error::Install(e.to_string()))?;
-
-    // setup our progress bar
-    dfu_iface
+    // setup device with progress and default address
+    let mut device = device.into_sync_dfu();
+    let device = device
         .with_progress(progress_handler)
         .override_address(DFUSE_DEFAULT_ADDRESS);
 
-    // PERFORM THE INSTALL
-    match dfu_iface.download_all(file) {
-        Ok(_) => {
-            if dfu_iface.will_detach() {
-                match dfu_iface.detach() {
-                    Ok(_) => match dfu_iface.usb_reset() {
-                        Ok(_) => Ok(()),
-                        Err(err) => {
-                            error!("usb reset error: {}", err);
-                            Err(Error::Install(err.to_string()))
-                        }
-                    },
-                    Err(err) => {
-                        error!("dfu detach error: {}", err);
-                        Err(Error::Install(err.to_string()))
-                    }
-                }
-            } else {
-                Ok(())
-            }
+    match device.download(file, file_size) {
+        Ok(_) => (),
+        Err(dfu_nusb::Error::Nusb(..)) => {
+            error!("unable to download firmware to device");
+            return Err(Error::Usb(
+                "unable to download firmware to device".to_string(),
+            ));
         }
-        Err(dfu_libusb::Error::LibUsb(rusb::Error::Io)) => Ok(()),
-        Err(err) => {
-            error!("dfu download error: {}", err);
-            Err(Error::Install(err.to_string()))
+        e => {
+            return e
+                .map_err(|err| Error::Usb(format!("could not write firmware to device: {}", err)))
         }
     }
+
+    // detach and reset the usb device
+    device
+        .detach()
+        .map_err(|e| Error::Usb(format!("unable to detach device: {}", e)))?;
+    device
+        .usb_reset()
+        .map_err(|e| Error::Usb(format!("unable to reset device: {}", e)))?;
+    Ok(())
 }
 
-fn open_device<C: rusb::UsbContext>(
-    context: &C,
-    vid: u16,
-    pid: u16,
-) -> Result<(rusb::Device<C>, rusb::DeviceHandle<C>)> {
-    let devices = context
-        .devices()
-        .map_err(|e| Error::USB(format!("unable to enumerate usb devices: {}", e)))?;
-    for device in devices.iter() {
-        let device_desc = match device.device_descriptor() {
-            Ok(x) => x,
-            Err(_) => continue,
-        };
+fn try_open(vid: u16, pid: u16, int: u8, alt: u8) -> Result<DfuNusb, dfu_nusb::Error> {
+    let info = nusb::list_devices()
+        .unwrap()
+        .find(|dev| dev.vendor_id() == vid && dev.product_id() == pid)
+        .ok_or(dfu_nusb::Error::DeviceNotFound)?;
+    let device = info.open()?;
+    let interface = device.claim_interface(int)?;
 
-        if device_desc.vendor_id() == vid && device_desc.product_id() == pid {
-            let handle = device
-                .open()
-                .map_err(|e| Error::USB(format!("unable to open usb device: {}", e)))?;
-            return Ok((device, handle));
-        }
-    }
-
-    Err(Error::USB(format!("unable to find usb device")))
+    DfuNusb::open(device, interface, alt)
 }

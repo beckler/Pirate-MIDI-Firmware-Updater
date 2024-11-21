@@ -47,6 +47,6 @@ pub struct Asset {
 
 impl Asset {
     pub fn is_compatible(&self, device: &ConnectedDevice) -> bool {
-        is_name_compatible(&device, &self.name, false)
+        is_name_compatible(device, &self.name, false)
     }
 }
