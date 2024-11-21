@@ -1,6 +1,6 @@
 // COMPATIBILITY
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use log::debug;
 
@@ -61,11 +61,11 @@ pub fn is_name_compatible(device: &ConnectedDevice, file_name: &str, allow_diag:
         // assume format: bridgeX_v1.2.1.1.bin || device_v1.0.0.0.uf2
         // the last number in the version is the compatible revision
         ConnectedDeviceType::Bridge6 | ConnectedDeviceType::Bridge4 => {
-            _is_compatible(device, &file_name)
+            _is_compatible(device, file_name)
         }
         ConnectedDeviceType::Click | ConnectedDeviceType::ULoop => {
             if !allow_diag {
-                _is_not_diag(device, &file_name)
+                _is_not_diag(device, file_name)
             } else {
                 true
             }
@@ -75,7 +75,7 @@ pub fn is_name_compatible(device: &ConnectedDevice, file_name: &str, allow_diag:
     }
 }
 
-pub fn is_file_compatible(device: &ConnectedDevice, binary: &PathBuf, allow_diag: bool) -> bool {
+pub fn is_file_compatible(device: &ConnectedDevice, binary: &Path, allow_diag: bool) -> bool {
     let file_name = binary.file_name().unwrap().to_string_lossy();
     is_name_compatible(device, &file_name, allow_diag)
 }
