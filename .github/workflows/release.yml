@@ -126,7 +126,7 @@ jobs:
         working-directory: updater
 
       - name: remove old latest.json
-        uses: flcdrg/remove-release-asset-action@v3
+        uses: flcdrg/remove-release-asset-action@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
