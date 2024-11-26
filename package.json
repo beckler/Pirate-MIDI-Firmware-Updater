@@ -13,7 +13,7 @@
     "@heroicons/react": "^2.0.18",
     "@tauri-apps/api": "^1.5.0",
     "next": "^14.0.1",
-    "postcss": "^8.4.27",
+    "postcss": "^8.4.35",
     "react": "^18.2.0",
     "react-content-loader": "^6.2.1",
     "react-dom": "^18.2.0",
